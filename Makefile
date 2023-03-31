@@ -15,7 +15,7 @@ CCFLAGS  = $(LOCAL_CFLAGS) $(INCLUDES) $(CFLAGS)
 BIN = lvgl_ethercat_demo
 
 #Collect the files to compile
-MAINSRC = ./ecat_test.c
+MAINSRC = ./ecat_test.c ./img_myir_logo.c
 
 include $(LVGL_DIR)/lvgl/lvgl.mk
 include $(LVGL_DIR)/lv_drivers/lv_drivers.mk

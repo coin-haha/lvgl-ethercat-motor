@@ -66,7 +66,8 @@ bool lv_font_get_glyph_dsc(const lv_font_t * font_p, lv_font_glyph_dsc_t * dsc_o
 {
     LV_ASSERT_NULL(font_p);
     LV_ASSERT_NULL(dsc_out);
-    dsc_out->resolved_font = NULL;
+    //dsc_out->resolved_font = NULL;
+    dsc_out->resolved_font = font_p;
     const lv_font_t * f = font_p;
     bool found = false;
     while(f) {
