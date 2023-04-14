@@ -87,7 +87,7 @@ bool evdev_set_file(char* dev_name)
         perror("unable to open evdev interface:");
         return false;
      }
-	printf("open input name111\n");
+	printf("open input [%s]\n",dev_name);
 #if USE_BSD_EVDEV
      fcntl(evdev_fd, F_SETFL, O_NONBLOCK);
 #else

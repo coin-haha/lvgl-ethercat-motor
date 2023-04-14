@@ -14,7 +14,19 @@
 #include <pthread.h>
 #include <time.h>
 #include <sys/time.h>
+#include <linux/fb.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 
+LV_FONT_DECLARE(lv_font_msyh_16)
+
+
+typedef enum{
+	DISP_FB,
+	DISP_WAYLAND,
+	DISP_UNKONN,
+
+}disp_screen_t;
 
 typedef enum {
     DISP_SMALL,
@@ -47,6 +59,12 @@ static lv_obj_t *current_position_text;
 static lv_obj_t *current_speed_text;
 static lv_obj_t * meter;
 
+int ethercat_connect =0;
+int fb_or_wayland = 0;
+int display_widht = 800;
+int display_height = 480;
+int color_depth = 32;
+	
 
 #define EC_TIMEOUTMON 500
 
@@ -57,6 +75,7 @@ int expectedWKC;
 volatile int wkc;
 boolean inOP;
 uint8 currentgroup = 0;
+
 
 #pragma pack(2)
 typedef struct
@@ -1220,7 +1239,7 @@ static void pp_create(lv_obj_t * parent)
 	//lv_obj_set_height(panel1,LV_SIZE_CONTENT);
 	//lv_obj_set_width(panel1,LV_HOR_RES);
 	lv_obj_set_width(panel1,lv_pct(100));
-	lv_obj_set_height(panel1,lv_pct(70));
+	lv_obj_set_height(panel1,lv_pct(90));
 
 	lv_obj_add_style(panel1,&style_bullet,0);
 
@@ -1424,7 +1443,7 @@ static void pp_create(lv_obj_t * parent)
    lv_obj_add_style(panel2,&style_bullet,0);
    lv_obj_align_to(panel2,panel1,LV_ALIGN_OUT_BOTTOM_LEFT,0,0);
    lv_obj_set_width(panel2,lv_pct(100));
-   lv_obj_set_height(panel2,lv_pct(30));
+   lv_obj_set_height(panel2,lv_pct(10));
 	
 	lv_obj_t * current_position_label = lv_label_create(panel2);
 	lv_label_set_text(current_position_label,"当前位置");
@@ -1432,6 +1451,7 @@ static void pp_create(lv_obj_t * parent)
 
 
    current_position_text = lv_textarea_create(panel2);
+   lv_obj_set_size(current_position_text,120,30);
    lv_textarea_set_one_line(current_position_text, true);
    lv_obj_align_to(current_position_text,current_position_label,LV_ALIGN_OUT_RIGHT_MID,50,0);
 
@@ -1442,6 +1462,7 @@ static void pp_create(lv_obj_t * parent)
 
 
    current_speed_text = lv_textarea_create(panel2);
+   lv_obj_set_size(current_speed_text,120,30);
    lv_textarea_set_one_line(current_speed_text, true);
    lv_obj_align_to(current_speed_text,current_speed_label,LV_ALIGN_OUT_RIGHT_MID,50,0);
 
@@ -1467,7 +1488,7 @@ static void pv_create(lv_obj_t * parent)
 
 }
 
-LV_FONT_DECLARE(lv_font_msyh_16)
+
 
 void lv_ethercat_demo_widgets()
 {
@@ -1504,7 +1525,6 @@ void lv_ethercat_demo_widgets()
     lv_style_set_border_width(&style_roller, 3);
     lv_style_set_pad_all(&style_roller, 0);
 
-
 	tv = lv_tabview_create(lv_scr_act(), LV_DIR_TOP, 70);
 
 	lv_obj_set_style_text_font(lv_scr_act(), font_normal, 0);
@@ -1525,12 +1545,11 @@ void lv_ethercat_demo_widgets()
 
 		label = lv_label_create(tab_btns);
 		lv_label_set_text(label, "ethercat demo");
-		lv_obj_add_style(label, &style_text_muted, 0);
+		lv_obj_add_style(label, &style_title, 0);
 		lv_obj_align_to(label, logo, LV_ALIGN_OUT_RIGHT_BOTTOM, 10, 0);
 	}
     lv_obj_t * tab_pp = lv_tabview_add_tab(tv, "轮廓位置模式(PP)");
     lv_obj_t * tab_pv = lv_tabview_add_tab(tv, "轮廓速度模式(PV)");
-    
 	pp_create(tab_pp);
 	pv_create(tab_pv);
 
@@ -1550,14 +1569,14 @@ int lvgl_screen_init()
 	pthread_t tid;
 
 	lv_init();
-
+	if(fb_or_wayland == DISP_WAYLAND){
 #if USE_WAYLAND == 1
 	lv_wayland_init();
 	lv_disp_t * disp;
-	disp = lv_wayland_create_window(LV_HOR_RES_MAX,LV_VER_RES_MAX,"lvgl ethercat demo",lv_wayland_close_window);
-
+	disp = lv_wayland_create_window(display_widht,display_height,"lvgl ethercat demo",lv_wayland_close_window);
+	printf("init display\n");
 #endif
-
+	}else if(fb_or_wayland == DISP_FB){
 
 #if USE_FBDEV == 1
 	#define DISP_BUF_SIZE (LV_HOR_RES_MAX*LV_VER_RES_MAX/10)
@@ -1565,23 +1584,57 @@ int lvgl_screen_init()
     fbdev_init();
 
     /*A small buffer for LittlevGL to draw the screen's content*/
-    static lv_color_t buf[DISP_BUF_SIZE];
+    //static lv_color_t buf[DISP_BUF_SIZE];
+	char *buf=NULL;
+	switch(color_depth){
+		case 1:
+			buf = malloc(display_widht*display_height/10*sizeof(lv_color1_t));
+			break;
+		case 8:
+			buf = malloc(display_widht*display_height/10*sizeof(lv_color8_t));
+			break;
+		case 16:
+			buf = malloc(display_widht*display_height/10*sizeof(lv_color16_t));
+			break;
+		default :
+			buf = malloc(display_widht*display_height/10*sizeof(lv_color32_t));
 
+	}
+	if(!buf){
+		printf("malloc error\n");
+	}
     /*Initialize a descriptor for the buffer*/
     static lv_disp_draw_buf_t disp_buf;
-    lv_disp_draw_buf_init(&disp_buf, buf, NULL, DISP_BUF_SIZE);
+    lv_disp_draw_buf_init(&disp_buf, buf, NULL, display_widht*display_height/10);
 
     /*Initialize and register a display driver*/
     static lv_disp_drv_t disp_drv;
     lv_disp_drv_init(&disp_drv);
     disp_drv.draw_buf   = &disp_buf;
     disp_drv.flush_cb   = fbdev_flush;
-    disp_drv.hor_res    = LV_HOR_RES_MAX;
-    disp_drv.ver_res    = LV_VER_RES_MAX;
+    disp_drv.hor_res    = display_widht;
+    disp_drv.ver_res    = display_height;
     lv_disp_drv_register(&disp_drv);
 
+
+	evdev_init();
+	static lv_indev_drv_t indev_drv_1;
+    lv_indev_drv_init(&indev_drv_1); /*Basic initialization*/
+    indev_drv_1.type = LV_INDEV_TYPE_POINTER;
+
+    /*This function will be called periodically (by the library) to get the mouse position and state*/
+    indev_drv_1.read_cb = evdev_read;
+    lv_indev_t *mouse_indev = lv_indev_drv_register(&indev_drv_1);
+#if 0
+	/*Set a cursor for the mouse*/
+  LV_IMG_DECLARE(mouse_cursor_icon)
+  lv_obj_t * cursor_obj = lv_img_create(lv_scr_act()); /*Create an image object for the cursor */
+  lv_img_set_src(cursor_obj, &mouse_cursor_icon);			/*Set the image source*/
+  lv_indev_set_cursor(mouse_indev, cursor_obj); 			/*Connect the image  object to the driver*/
 #endif
 	
+#endif
+	}
 	lv_ethercat_demo_widgets();
 
 	//lv_obj_t * logo = lv_img_create(lv_scr_act());
@@ -1598,6 +1651,92 @@ int lvgl_screen_init()
 	return 0;
 }
 
+int Runcommand(const char * cmd,char * result, int length)
+{
+	if(cmd == NULL){
+		printf("cmd is NULL");
+		return -1;
+	}
+	FILE *stream ;
+	stream = popen(cmd, "r");
+	if(stream == NULL){
+		printf("error to run cmd:%s",cmd);
+		return -2;
+	}
+	if(result != NULL && length != 0){
+		int i = fread( result, sizeof(char), length-1,  stream) ;
+		if(i > (length -1)){
+			printf("error to read result of %s ",cmd);
+			pclose(stream);
+			return -1;
+		}
+		result[i] = '\0';
+	}
+	pclose( stream );
+	return 0;	
+}
+
+
+disp_screen_t check_display()
+{
+	char command[1024]={0};
+	char buf[1024]={0};
+
+	snprintf(command,sizeof(command),"ps -ef | grep weston | wc -l");
+	Runcommand(command,buf,sizeof(buf));
+	printf("buf[%s]\n",buf);
+	if(atoi(buf)>2){
+		
+		return DISP_WAYLAND;
+	}
+
+	if(access("/dev/fb0",F_OK)== 0){
+		return DISP_FB;
+	}	
+
+
+
+
+
+	return DISP_UNKONN;
+}
+
+int check_resolution()
+{
+	int fbfd = -1;
+	struct fb_var_screeninfo vinfo;
+	
+	/* open device*/
+	fbfd = open("/dev/fb0", O_RDWR);
+	if (!fbfd) {
+		printf("Error: cannot open framebuffer device.\n");
+	}
+
+	/* Get variable screen information */
+	
+	if (ioctl(fbfd, FBIOGET_VSCREENINFO, &vinfo)) {
+		printf("Error reading variable information.\n");
+	}
+
+
+	if(fbfd > 0){
+		close(fbfd);
+		fbfd = -1;
+	}
+	//int display_widht = 800;
+	//int display_height = 480;
+	//int color_depth = 32;
+
+	printf("vinfo.xres=%d\n",vinfo.xres);
+	printf("vinfo.yres=%d\n",vinfo.yres);
+	printf("vinfo.bits_per_bits=%d\n",vinfo.bits_per_pixel);//24
+	display_widht=vinfo.xres;
+	display_height=vinfo.yres;
+	color_depth=vinfo.bits_per_pixel;
+
+
+}
+
 int main(int argc, char* argv[])
 {
 
@@ -1606,11 +1745,18 @@ int main(int argc, char* argv[])
 	#if 1
 	ret = ethercat_init(argc, argv);
 	if(ret != 0){
-		printf("ether init fail!\n");
-		exit(1);
+		//printf("ether init fail!\n");
+		//exit(1);
+		ethercat_connect=0;
+	}else{
+		ethercat_connect=1;
 	}
 	#endif
 
+	fb_or_wayland=check_display();
+	check_resolution();
+	
+	printf("fb_or_wayland [%d]\n",fb_or_wayland);
 	ret = lvgl_screen_init();
 	if(ret != 0){
 		printf("lvgl_screen_init init fail!\n");
